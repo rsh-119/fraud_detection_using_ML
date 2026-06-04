@@ -1,0 +1,20 @@
+# Python 
+__pycache__/ 
+*.pyc 
+*.pyo 
+*.pyd 
+.Python 
+venv/ 
+env/ 
+.venv/ 
+*.csv 
+*.pkl 
+*.joblib 
+.ipynb_checkpoints/ 
+.vscode/ 
+.idea/ 
+*.log 
+.DS_Store 
+Thumbs.db 
+models/* 
+submissions/* 
