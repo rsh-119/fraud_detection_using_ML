@@ -202,7 +202,7 @@ def predict_fraud(transaction_data: Dict) -> FraudResponse:
     if lgb_model is not None:
         lgb_pred = float(lgb_model.predict_proba(df)[0, 1])
     
-    # Ensemble (70% XGBoost, 30% LightGBM)
+    # Ensemble (30% XGBoost, 70% LightGBM)
     final_pred = 0.3 * xgb_pred + 0.7 * lgb_pred
     
     return FraudResponse(
