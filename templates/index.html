@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fraud Detection System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .high-risk {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+        }
+        .medium-risk {
+            background: #fff3e0;
+            border-left: 4px solid #ff9800;
+        }
+        .low-risk {
+            background: #e8f5e9;
+            border-left: 4px solid #4caf50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Fraud Detection System</h1>
+        <form id="fraudForm">
+            <label>Transaction Amount ($):</label>
+            <input type="number" id="amount" step="0.01" required>
+            
+            <label>Product Code:</label>
+            <select id="product">
+                <option value="W">W</option>
+                <option value="C">C</option>
+                <option value="R">R</option>
+            </select>
+            
+            <label>Card ID:</label>
+            <input type="number" id="card_id" value="12345">
+            
+            <button type="submit">Check Fraud</button>
+        </form>
+        
+        <div id="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        document.getElementById('fraudForm').onsubmit = async (e) => {
+            e.preventDefault();
+            
+            const data = {
+                amount: parseFloat(document.getElementById('amount').value),
+                product: document.getElementById('product').value,
+                card_id: parseInt(document.getElementById('card_id').value)
+            };
+            
+            const response = await fetch('/predict', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            const resultDiv = document.getElementById('result');
+            
+            let riskClass = '';
+            if (result.risk_level === 'HIGH') riskClass = 'high-risk';
+            else if (result.risk_level === 'MEDIUM') riskClass = 'medium-risk';
+            else riskClass = 'low-risk';
+            
+            resultDiv.className = `result ${riskClass}`;
+            resultDiv.innerHTML = `
+                <h3>Prediction Result:</h3>
+                <p><strong>Fraud Probability:</strong> ${(result.fraud_probability * 100).toFixed(1)}%</p>
+                <p><strong>Risk Level:</strong> ${result.risk_level}</p>
+                <p><strong>Is Fraud:</strong> ${result.is_fraud ? '⚠️ YES' : '✅ NO'}</p>
+                <p><strong>XGBoost Score:</strong> ${(result.xgb_score * 100).toFixed(1)}%</p>
+                <p><strong>LightGBM Score:</strong> ${(result.lgb_score * 100).toFixed(1)}%</p>
+            `;
+            resultDiv.style.display = 'block';
+        };
+    </script>
+</body>
+</html>
