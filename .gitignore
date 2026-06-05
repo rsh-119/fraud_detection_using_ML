@@ -7,14 +7,19 @@ __pycache__/
 venv/ 
 env/ 
 .venv/ 
-*.csv 
-*.pkl 
+*.csv  
 *.joblib 
 .ipynb_checkpoints/ 
 .vscode/ 
 .idea/ 
 *.log 
 .DS_Store 
-Thumbs.db 
-models/* 
+Thumbs.db  
 submissions/* 
+# Parquet data files (large)
+*.parquet
+data/raw/
+data/processed/
+# Ignore only backup model files, keep main models
+models/*.backup
+models/*.old

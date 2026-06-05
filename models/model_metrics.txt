@@ -1,0 +1,7 @@
+AUC Score: 0.9584
+Accuracy: 0.9414
+Precision: 0.3558
+Recall: 0.8321
+F1 Score: 0.4984
+Best Iteration: 499
+Training Time: 160.74 seconds
