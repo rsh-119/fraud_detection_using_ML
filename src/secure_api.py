@@ -203,7 +203,7 @@ def predict_fraud(transaction_data: Dict) -> FraudResponse:
         lgb_pred = float(lgb_model.predict_proba(df)[0, 1])
     
     # Ensemble (70% XGBoost, 30% LightGBM)
-    final_pred = 0.7 * xgb_pred + 0.3 * lgb_pred
+    final_pred = 0.3 * xgb_pred + 0.7 * lgb_pred
     
     return FraudResponse(
         fraud_probability=round(final_pred, 4),
