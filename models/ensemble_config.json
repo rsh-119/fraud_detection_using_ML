@@ -1,9 +1,0 @@
-{
-  "xgb_weight": 0.15000000000000002,
-  "lgb_weight": 0.85,
-  "best_threshold": 0.771537216894751,
-  "ensemble_auc": 0.9697570796504711,
-  "xgb_auc": 0.9666646452269614,
-  "lgb_auc": 0.9695871721448819,
-  "lgb_model_used": "LightGBM (tuned)"
-}
