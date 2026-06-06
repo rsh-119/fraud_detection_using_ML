@@ -61,7 +61,7 @@ start_time = time.time()
 # ── FIX: compute from actual split counts, never hardcode ──
 neg_count = (y_train_split == 0).sum()
 pos_count = (y_train_split == 1).sum()
-scale_pos_weight = neg_count / pos_count          # was hardcoded to 40
+scale_pos_weight = neg_count / pos_count          
 print(f"✓ Neg samples:      {neg_count:,}")
 print(f"✓ Pos samples:      {pos_count:,}")
 print(f"✓ Scale pos weight: {scale_pos_weight:.2f}  (computed from data)")
@@ -74,8 +74,8 @@ dval   = xgb.DMatrix(X_val,         label=y_val)
 params = {
     'objective':        'binary:logistic',
     'eval_metric':      'auc',
-    'max_depth':        6,
-    'learning_rate':    0.05,       # was 0.1 — lower lr + more rounds = better
+    'max_depth':        5,
+    'learning_rate':    0.1,       # was 0.1 — lower lr + more rounds = better
     'subsample':        0.8,
     'colsample_bytree': 0.8,
     'min_child_weight': 10,         # added — prevents overfitting on rare fraud
@@ -92,7 +92,7 @@ watchlist = [(dtrain, 'train'), (dval, 'eval')]
 model_xgb = xgb.train(
     params,
     dtrain,
-    num_boost_round=2000,           # was 500 — gives early stopping real room
+    num_boost_round=500,           # was 500 — gives early stopping real room
     evals=watchlist,
     early_stopping_rounds=100,      # was 50 — more patience at lower lr
     verbose_eval=100,               # print every 100 rounds so you can watch progress
