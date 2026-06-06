@@ -12,6 +12,7 @@ import uvicorn
 from datetime import datetime
 import time
 import logging
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -47,14 +48,14 @@ print("="*60)
 
 MODELS_DIR = Path("models")
 
-# Load feature columns
+# Load feature columns from JSON
+FEATURE_COLUMNS = None
 try:
-    with open(MODELS_DIR.parent / "data/processed/features.txt", 'r') as f:
-        FEATURE_COLUMNS = [line.strip() for line in f.readlines()]
-    print(f"✓ Loaded {len(FEATURE_COLUMNS)} feature columns")
-except:
-    print("⚠️ Feature list not found")
-    FEATURE_COLUMNS = None
+    with open(MODELS_DIR / "feature_columns.json", 'r') as f:
+        FEATURE_COLUMNS = json.load(f)
+    print(f"✓ Loaded {len(FEATURE_COLUMNS)} feature columns from JSON")
+except Exception as e:
+    print(f"⚠️ Could not load feature columns: {e}")
 
 # Load XGBoost
 try:
@@ -67,28 +68,11 @@ except Exception as e:
 
 # Load LightGBM
 try:
-    lgb_model = joblib.load(MODELS_DIR / "lightgbm_model_tuned.pkl")
-    print("✓ LightGBM Tuned model loaded")
-except:
-    try:
-        lgb_model = joblib.load(MODELS_DIR / "lightgbm_model.pkl")
-        print("✓ LightGBM model loaded")
-    except Exception as e:
-        print(f"❌ LightGBM load failed: {e}")
-        lgb_model = None
-
-# Load thresholds if available
-try:
-    xgb_threshold = np.load(MODELS_DIR / "xgboost_threshold.npy")
-    print(f"✓ XGBoost threshold: {xgb_threshold:.3f}")
-except:
-    xgb_threshold = 0.5
-
-try:
-    lgb_threshold = np.load(MODELS_DIR / "lightgbm_tuned_threshold.npy")
-    print(f"✓ LightGBM threshold: {lgb_threshold:.3f}")
-except:
-    lgb_threshold = 0.5
+    lgb_model = joblib.load(MODELS_DIR / "lightgbm_model.pkl")
+    print("✓ LightGBM model loaded")
+except Exception as e:
+    print(f"❌ LightGBM load failed: {e}")
+    lgb_model = None
 
 if xgb_model is None and lgb_model is None:
     print("\n❌ ERROR: No models loaded!")
@@ -132,54 +116,31 @@ class BatchFraudResponse(BaseModel):
 
 # ========== HELPER FUNCTIONS ==========
 def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
-    """Convert API input to model-ready format with ALL 205 features"""
+    """Convert API input to model-ready format with ALL features"""
     
-    # Load template with all features from training data
-    template_path = MODELS_DIR.parent / "data/processed" / "X_train.parquet"
+    # Create a DataFrame with all features set to -999
+    if FEATURE_COLUMNS:
+        df = pd.DataFrame({col: [-999] for col in FEATURE_COLUMNS})
+    else:
+        # Fallback: use the transaction data only
+        df = pd.DataFrame([transaction])
+        return df
     
-    if not template_path.exists():
-        logger.error(f"Template not found at {template_path}")
-        if FEATURE_COLUMNS:
-            df = pd.DataFrame([transaction])
-            for col in FEATURE_COLUMNS:
-                if col not in df.columns:
-                    df[col] = -999
-            df = df[FEATURE_COLUMNS]
-            for col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(-999)
-            return df
-        else:
-            raise HTTPException(status_code=500, detail="Feature template not available")
-    
-    # Load template and create default row with all features set to -999
-    template_df = pd.read_parquet(template_path)
-    default_row = template_df.iloc[0:1].copy()
-    
-    # Set all features to -999 (safe default)
-    for col in default_row.columns:
-        default_row[col] = -999
-    
-    # Product code mapping (convert letters to numbers)
+    # Product code mapping
     product_map = {"W": 1, "C": 2, "R": 3, "S": 4, "H": 5}
     
     # Override with actual user input values
     for key, value in transaction.items():
-        if key in default_row.columns and value is not None:
+        if key in df.columns and value is not None:
             try:
-                # Handle ProductCD specially
                 if key == "ProductCD":
-                    default_row[key] = product_map.get(str(value), -999)
+                    df[key] = product_map.get(str(value), -999)
                 else:
-                    default_row[key] = float(value)
+                    df[key] = float(value)
             except (ValueError, TypeError):
-                default_row[key] = -999
+                df[key] = -999
     
-    # Ensure all columns are numeric
-    for col in default_row.columns:
-        default_row[col] = pd.to_numeric(default_row[col], errors='coerce').fillna(-999)
-    
-    logger.info(f"Created feature vector with {len(default_row.columns)} features")
-    return default_row
+    return df
 
 def get_risk_level(probability: float) -> str:
     if probability >= 0.7:
