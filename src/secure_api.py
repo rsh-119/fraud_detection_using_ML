@@ -65,7 +65,7 @@ except Exception as e:
     print(f"❌ XGBoost load failed: {e}")
     xgb_model = None
 
-# Load Tuned LightGBM
+# Load LightGBM
 try:
     lgb_model = joblib.load(MODELS_DIR / "lightgbm_model_tuned.pkl")
     print("✓ LightGBM Tuned model loaded")
@@ -121,30 +121,50 @@ class FraudResponse(BaseModel):
     lgb_score: float
     explanation: str
     timestamp: str
-    response_time_ms: float = None  # Added for monitoring
+    response_time_ms: float = None
 
 class BatchFraudResponse(BaseModel):
-    """Batch prediction response"""
     total_transactions: int
     high_risk_count: int
     medium_risk_count: int
     low_risk_count: int
     predictions: List[Dict]
 
-# ========== HELPER FUNCTIONS ==========
+# ========== FIXED HELPER FUNCTIONS ==========
 def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
-    df = pd.DataFrame([transaction])
-    for col in df.columns:
-        if df[col].isnull().any():
-            df[col] = df[col].fillna(-999)
-    if FEATURE_COLUMNS:
-        for col in FEATURE_COLUMNS:
-            if col not in df.columns:
-                df[col] = -999
-        df = df[FEATURE_COLUMNS]
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(-999)
-    return df
+    """Convert API input to model-ready format with ALL 205 features"""
+    
+    # Load template with all features from training data
+    template_path = MODELS_DIR.parent / "data/processed" / "X_train.parquet"
+    
+    if not template_path.exists():
+        logger.error(f"Template not found at {template_path}")
+        # Fallback: use FEATURE_COLUMNS if available
+        if FEATURE_COLUMNS:
+            df = pd.DataFrame([transaction])
+            for col in FEATURE_COLUMNS:
+                if col not in df.columns:
+                    df[col] = -999
+            df = df[FEATURE_COLUMNS]
+            return df
+        else:
+            raise HTTPException(status_code=500, detail="Feature template not available")
+    
+    # Load template and create default row with all features set to -999
+    template_df = pd.read_parquet(template_path)
+    default_row = template_df.iloc[0:1].copy()
+    
+    # Set all features to -999 (safe default)
+    for col in default_row.columns:
+        default_row[col] = -999
+    
+    # Override with actual user input values
+    for key, value in transaction.items():
+        if key in default_row.columns:
+            default_row[key] = value
+    
+    logger.info(f"Created feature vector with {len(default_row.columns)} features")
+    return default_row
 
 def get_risk_level(probability: float) -> str:
     if probability >= 0.7:
