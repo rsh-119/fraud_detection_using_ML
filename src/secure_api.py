@@ -130,7 +130,7 @@ class BatchFraudResponse(BaseModel):
     low_risk_count: int
     predictions: List[Dict]
 
-# ========== FIXED HELPER FUNCTIONS ==========
+# ========== HELPER FUNCTIONS ==========
 def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
     """Convert API input to model-ready format with ALL 205 features"""
     
@@ -139,13 +139,14 @@ def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
     
     if not template_path.exists():
         logger.error(f"Template not found at {template_path}")
-        # Fallback: use FEATURE_COLUMNS if available
         if FEATURE_COLUMNS:
             df = pd.DataFrame([transaction])
             for col in FEATURE_COLUMNS:
                 if col not in df.columns:
                     df[col] = -999
             df = df[FEATURE_COLUMNS]
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(-999)
             return df
         else:
             raise HTTPException(status_code=500, detail="Feature template not available")
@@ -158,10 +159,24 @@ def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
     for col in default_row.columns:
         default_row[col] = -999
     
+    # Product code mapping (convert letters to numbers)
+    product_map = {"W": 1, "C": 2, "R": 3, "S": 4, "H": 5}
+    
     # Override with actual user input values
     for key, value in transaction.items():
-        if key in default_row.columns:
-            default_row[key] = value
+        if key in default_row.columns and value is not None:
+            try:
+                # Handle ProductCD specially
+                if key == "ProductCD":
+                    default_row[key] = product_map.get(str(value), -999)
+                else:
+                    default_row[key] = float(value)
+            except (ValueError, TypeError):
+                default_row[key] = -999
+    
+    # Ensure all columns are numeric
+    for col in default_row.columns:
+        default_row[col] = pd.to_numeric(default_row[col], errors='coerce').fillna(-999)
     
     logger.info(f"Created feature vector with {len(default_row.columns)} features")
     return default_row
