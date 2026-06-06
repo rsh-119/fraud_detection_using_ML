@@ -123,6 +123,14 @@ class FraudResponse(BaseModel):
     timestamp: str
     response_time_ms: float = None  # Added for monitoring
 
+class BatchFraudResponse(BaseModel):
+    """Batch prediction response"""
+    total_transactions: int
+    high_risk_count: int
+    medium_risk_count: int
+    low_risk_count: int
+    predictions: List[Dict]
+
 # ========== HELPER FUNCTIONS ==========
 def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
     df = pd.DataFrame([transaction])
