@@ -1,4 +1,4 @@
-"""Secure Fraud Detection API with Authentication"""
+"""Secure Fraud Detection API with Authentication - Enhanced Version"""
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
@@ -10,8 +10,13 @@ import xgboost as xgb
 from pathlib import Path
 import uvicorn
 from datetime import datetime
+import time
+import logging
 
-# ========== INITIALIZE FASTAPI ==========
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="Secure Fraud Detection API",
     description="Production-ready fraud detection with API key authentication",
@@ -19,42 +24,20 @@ app = FastAPI(
 )
 
 # ========== API KEY AUTHENTICATION ==========
-# Valid API keys (in production, store these in environment variables)
 VALID_API_KEYS = {
-    "prod_key_123": {
-        "name": "Production App",
-        "rate_limit": 1000,
-        "active": True
-    },
-    "test_key_456": {
-        "name": "Testing App", 
-        "rate_limit": 100,
-        "active": True
-    },
-    "dev_key_789": {
-        "name": "Development App",
-        "rate_limit": 500,
-        "active": True
-    }
+    "prod_key_123": {"name": "Production App", "rate_limit": 1000, "active": True},
+    "test_key_456": {"name": "Testing App", "rate_limit": 100, "active": True},
+    "dev_key_789": {"name": "Development App", "rate_limit": 500, "active": True}
 }
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 
 def verify_api_key(api_key: str = Security(api_key_header)):
-    """Verify API key and return client info"""
     if api_key not in VALID_API_KEYS:
-        raise HTTPException(
-            status_code=403, 
-            detail="Invalid API Key. Please provide a valid X-API-Key header."
-        )
-    
+        raise HTTPException(status_code=403, detail="Invalid API Key")
     client_info = VALID_API_KEYS[api_key]
     if not client_info.get("active", True):
-        raise HTTPException(
-            status_code=403,
-            detail="API Key is deactivated. Please contact administrator."
-        )
-    
+        raise HTTPException(status_code=403, detail="API Key deactivated")
     return client_info
 
 # ========== LOAD MODELS ==========
@@ -70,37 +53,51 @@ try:
         FEATURE_COLUMNS = [line.strip() for line in f.readlines()]
     print(f"✓ Loaded {len(FEATURE_COLUMNS)} feature columns")
 except:
-    print("⚠️ Feature list not found, will use default columns")
+    print("⚠️ Feature list not found")
     FEATURE_COLUMNS = None
 
-# Load XGBoost model
+# Load XGBoost
 try:
     xgb_model = xgb.Booster()
     xgb_model.load_model(str(MODELS_DIR / "xgboost_model.json"))
-    print("✓ XGBoost model loaded successfully")
+    print("✓ XGBoost model loaded")
 except Exception as e:
-    print(f"❌ Failed to load XGBoost model: {e}")
+    print(f"❌ XGBoost load failed: {e}")
     xgb_model = None
 
-# Load LightGBM model
+# Load Tuned LightGBM
 try:
     lgb_model = joblib.load(MODELS_DIR / "lightgbm_model_tuned.pkl")
-    print("✓ LightGBM model loaded successfully")
-except Exception as e:
-    print(f"❌ Failed to load LightGBM model Tuned: {e}")
-    lgb_model = None
+    print("✓ LightGBM Tuned model loaded")
+except:
+    try:
+        lgb_model = joblib.load(MODELS_DIR / "lightgbm_model.pkl")
+        print("✓ LightGBM model loaded")
+    except Exception as e:
+        print(f"❌ LightGBM load failed: {e}")
+        lgb_model = None
+
+# Load thresholds if available
+try:
+    xgb_threshold = np.load(MODELS_DIR / "xgboost_threshold.npy")
+    print(f"✓ XGBoost threshold: {xgb_threshold:.3f}")
+except:
+    xgb_threshold = 0.5
+
+try:
+    lgb_threshold = np.load(MODELS_DIR / "lightgbm_tuned_threshold.npy")
+    print(f"✓ LightGBM threshold: {lgb_threshold:.3f}")
+except:
+    lgb_threshold = 0.5
 
 if xgb_model is None and lgb_model is None:
-    print("\n❌ ERROR: No models loaded! Please train models first:")
-    print("   python src/models/xgboost_baseline.py")
-    print("   python src/models/lightgbm_standalone.py")
+    print("\n❌ ERROR: No models loaded!")
     exit(1)
 
 print("✅ All models loaded successfully!")
 
-# ========== REQUEST/RESPONSE MODELS ==========
+# ========== REQUEST MODELS ==========
 class TransactionRequest(BaseModel):
-    """Single transaction request"""
     TransactionAmt: float
     ProductCD: str = "W"
     card1: int = 12345
@@ -112,23 +109,11 @@ class TransactionRequest(BaseModel):
     addr1: int = None
     addr2: int = None
     TransactionDT: int = None
-    
-    class Config:
-        schema_extra = {
-            "example": {
-                "TransactionAmt": 1500.50,
-                "ProductCD": "W",
-                "card1": 12345,
-                "TransactionDT": 86400000
-            }
-        }
 
 class BatchTransactionRequest(BaseModel):
-    """Batch transaction request"""
     transactions: List[TransactionRequest]
 
 class FraudResponse(BaseModel):
-    """Fraud prediction response"""
     fraud_probability: float
     is_fraud: bool
     risk_level: str
@@ -136,40 +121,24 @@ class FraudResponse(BaseModel):
     lgb_score: float
     explanation: str
     timestamp: str
-
-class BatchFraudResponse(BaseModel):
-    """Batch prediction response"""
-    total_transactions: int
-    high_risk_count: int
-    medium_risk_count: int
-    low_risk_count: int
-    predictions: List[Dict]
+    response_time_ms: float = None  # Added for monitoring
 
 # ========== HELPER FUNCTIONS ==========
 def preprocess_input(transaction: Dict[str, Any]) -> pd.DataFrame:
-    """Convert API input to model-ready format"""
     df = pd.DataFrame([transaction])
-    
-    # Fill missing values
     for col in df.columns:
         if df[col].isnull().any():
             df[col] = df[col].fillna(-999)
-    
-    # Add missing columns if needed
     if FEATURE_COLUMNS:
         for col in FEATURE_COLUMNS:
             if col not in df.columns:
                 df[col] = -999
         df = df[FEATURE_COLUMNS]
-    
-    # Ensure numeric types
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(-999)
-    
     return df
 
 def get_risk_level(probability: float) -> str:
-    """Categorize risk level"""
     if probability >= 0.7:
         return "HIGH RISK"
     elif probability >= 0.3:
@@ -178,20 +147,18 @@ def get_risk_level(probability: float) -> str:
         return "LOW RISK"
 
 def get_explanation(probability: float) -> str:
-    """Generate explanation for prediction"""
     if probability >= 0.7:
-        return "High fraud probability detected. Recommend manual review and additional verification."
+        return "High fraud probability detected. Recommend manual review."
     elif probability >= 0.3:
-        return "Medium fraud probability. Monitor transaction closely and consider additional checks."
+        return "Medium fraud probability. Monitor transaction closely."
     else:
         return "Low fraud probability. Transaction appears normal."
 
 def predict_fraud(transaction_data: Dict) -> FraudResponse:
-    """Make fraud prediction for single transaction"""
-    # Preprocess
+    start_time = time.time()
+    
     df = preprocess_input(transaction_data)
     
-    # Make predictions
     xgb_pred = 0.5
     lgb_pred = 0.5
     
@@ -202,8 +169,10 @@ def predict_fraud(transaction_data: Dict) -> FraudResponse:
     if lgb_model is not None:
         lgb_pred = float(lgb_model.predict_proba(df)[0, 1])
     
-    # Ensemble (30% XGBoost, 70% LightGBM)
-    final_pred = 0.3 * xgb_pred + 0.7 * lgb_pred
+    # Ensemble (50/50 balance)
+    final_pred = 0.5 * xgb_pred + 0.5 * lgb_pred
+    
+    elapsed_ms = (time.time() - start_time) * 1000
     
     return FraudResponse(
         fraud_probability=round(final_pred, 4),
@@ -212,13 +181,13 @@ def predict_fraud(transaction_data: Dict) -> FraudResponse:
         xgb_score=round(xgb_pred, 4),
         lgb_score=round(lgb_pred, 4),
         explanation=get_explanation(final_pred),
-        timestamp=datetime.now().isoformat()
+        timestamp=datetime.now().isoformat(),
+        response_time_ms=round(elapsed_ms, 2)
     )
 
 # ========== API ENDPOINTS ==========
 @app.get("/")
 def root():
-    """Root endpoint"""
     return {
         "message": "Fraud Detection API",
         "version": "2.0.0",
@@ -234,7 +203,6 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "models_loaded": {
@@ -247,43 +215,34 @@ def health_check():
 
 @app.get("/info")
 def model_info(api_key: dict = Depends(verify_api_key)):
-    """Get model information (requires authentication)"""
     return {
         "model_name": "Fraud Detection Ensemble",
         "version": "2.0.0",
         "features_used": len(FEATURE_COLUMNS) if FEATURE_COLUMNS else 205,
-        "xgb_auc": 0.9584,
-        "lgb_auc": 0.9241,
-        "ensemble_auc": 0.96,
-        "description": "Ensemble of XGBoost and LightGBM models for credit card fraud detection",
+        "xgb_auc": 0.9590,
+        "lgb_auc": 0.9696,
+        "ensemble_auc": 0.9696,
+        "description": "Ensemble of XGBoost and LightGBM for fraud detection",
         "authentication": "API Key required",
         "client": api_key
     }
 
 @app.post("/predict", response_model=FraudResponse)
-def predict_single(
-    transaction: TransactionRequest,
-    api_key: dict = Depends(verify_api_key)
-):
-    """Predict fraud for a single transaction (requires authentication)"""
+def predict_single(transaction: TransactionRequest, api_key: dict = Depends(verify_api_key)):
     try:
-        transaction_dict = transaction.dict()
-        result = predict_fraud(transaction_dict)
+        logger.info(f"Prediction - Amount: ${transaction.TransactionAmt}, Product: {transaction.ProductCD}")
+        result = predict_fraud(transaction.dict())
+        logger.info(f"Result - Risk: {result.risk_level}, Time: {result.response_time_ms}ms")
         return result
     except Exception as e:
+        logger.error(f"Prediction error: {e}")
         raise HTTPException(status_code=400, detail=f"Prediction error: {str(e)}")
 
 @app.post("/predict/batch", response_model=BatchFraudResponse)
-def predict_batch(
-    batch: BatchTransactionRequest,
-    api_key: dict = Depends(verify_api_key)
-):
-    """Predict fraud for multiple transactions (requires authentication)"""
+def predict_batch(batch: BatchTransactionRequest, api_key: dict = Depends(verify_api_key)):
     try:
         predictions = []
-        high_risk = 0
-        medium_risk = 0
-        low_risk = 0
+        high_risk = medium_risk = low_risk = 0
         
         for transaction in batch.transactions:
             result = predict_fraud(transaction.dict())
@@ -308,9 +267,8 @@ def predict_batch(
             predictions=predictions
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Batch prediction error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Batch error: {str(e)}")
 
-# ========== RUN API ==========
 if __name__ == "__main__":
     print("\n" + "="*60)
     print("🚀 STARTING SECURE FRAUD DETECTION API")
@@ -318,13 +276,7 @@ if __name__ == "__main__":
     print(f"\n📍 API URL: http://127.0.0.1:8000")
     print(f"📖 API Docs: http://127.0.0.1:8000/docs")
     print(f"🔑 Test API Key: prod_key_123")
-    print(f"\n⚠️  Press CTRL+C to stop the API")
+    print(f"\n⚠️  Press CTRL+C to stop")
     print("="*60 + "\n")
     
-    uvicorn.run(
-        app, 
-        host="127.0.0.1", 
-        port=8000, 
-        log_level="info",
-        access_log=True
-    )
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
