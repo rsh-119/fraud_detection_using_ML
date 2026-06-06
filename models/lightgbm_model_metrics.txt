@@ -4,4 +4,4 @@ Precision: 0.1959
 Recall: 0.8154
 F1 Score: 0.3159
 Best Iteration: 100
-Training Time: 23.09 seconds
+Training Time: 17.92 seconds
