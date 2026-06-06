@@ -84,10 +84,10 @@ except Exception as e:
 
 # Load LightGBM model
 try:
-    lgb_model = joblib.load(MODELS_DIR / "lightgbm_model.pkl")
+    lgb_model = joblib.load(MODELS_DIR / "lightgbm_model_tuned.pkl")
     print("✓ LightGBM model loaded successfully")
 except Exception as e:
-    print(f"❌ Failed to load LightGBM model: {e}")
+    print(f"❌ Failed to load LightGBM model Tuned: {e}")
     lgb_model = None
 
 if xgb_model is None and lgb_model is None:

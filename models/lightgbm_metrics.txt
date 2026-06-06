@@ -5,4 +5,4 @@ Recall: 0.7002
 F1 Score: 0.7692
 Best Threshold: 0.7914
 Best Iteration: 1996
-Training Time: 297.61 seconds
+Training Time: 261.99 seconds
