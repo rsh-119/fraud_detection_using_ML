@@ -1,0 +1,8 @@
+AUC Score: 0.9698
+Accuracy: 0.9849
+Precision: 0.8327
+Recall: 0.7106
+F1 Score: 0.7668
+Best Threshold: 0.7715
+XGBoost Weight: 0.15
+LightGBM Weight: 0.85

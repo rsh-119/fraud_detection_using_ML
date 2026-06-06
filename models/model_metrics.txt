@@ -1,7 +1,9 @@
-AUC Score: 0.9584
-Accuracy: 0.9414
-Precision: 0.3558
-Recall: 0.8321
-F1 Score: 0.4984
-Best Iteration: 499
-Training Time: 160.74 seconds
+AUC Score: 0.9667
+Accuracy: 0.9832
+Precision: 0.8013
+Recall: 0.6908
+F1 Score: 0.7419
+Best Threshold: 0.8074
+Best Iteration: 1986
+Scale Pos Weight: 27.58
+Training Time: 716.94 seconds

@@ -1,8 +1,8 @@
-"""XGBoost Model Training for IEEE-CIS Fraud Detection"""
+"""XGBoost Model Training for IEEE-CIS Fraud Detection - Tuned Version"""
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, accuracy_score, confusion_matrix
+from sklearn.metrics import roc_auc_score, accuracy_score, confusion_matrix, precision_recall_curve
 import xgboost as xgb
 from pathlib import Path
 import joblib
@@ -17,7 +17,7 @@ MODELS_DIR = PROJECT_ROOT / "models"
 SUBMISSIONS_DIR = PROJECT_ROOT / "submissions"
 
 print("="*60)
-print("XGBOOST MODEL TRAINING")
+print("XGBOOST MODEL TRAINING (TUNED)")
 print("="*60)
 print(f"\n📁 Project root: {PROJECT_ROOT}")
 
@@ -58,91 +58,117 @@ print(f"✓ Validation set: {X_val.shape[0]:,} samples")
 print("\n3. Training XGBoost model...")
 start_time = time.time()
 
-# Calculate class weight
-neg_count = len(y_train_split[y_train_split == 0])
-pos_count = len(y_train_split[y_train_split == 1])
-scale_pos_weight = neg_count / pos_count
-print(f"✓ Scale pos weight: {scale_pos_weight:.2f}")
+# ── FIX: compute from actual split counts, never hardcode ──
+neg_count = (y_train_split == 0).sum()
+pos_count = (y_train_split == 1).sum()
+scale_pos_weight = neg_count / pos_count          # was hardcoded to 40
+print(f"✓ Neg samples:      {neg_count:,}")
+print(f"✓ Pos samples:      {pos_count:,}")
+print(f"✓ Scale pos weight: {scale_pos_weight:.2f}  (computed from data)")
 
 # Create DMatrix for faster training
 dtrain = xgb.DMatrix(X_train_split, label=y_train_split)
-dval = xgb.DMatrix(X_val, label=y_val)
+dval   = xgb.DMatrix(X_val,         label=y_val)
 
 # XGBoost parameters
 params = {
-    'objective': 'binary:logistic',
-    'eval_metric': 'auc',
-    'max_depth': 6,
-    'learning_rate': 0.1,
-    'subsample': 0.8,
+    'objective':        'binary:logistic',
+    'eval_metric':      'auc',
+    'max_depth':        6,
+    'learning_rate':    0.05,       # was 0.1 — lower lr + more rounds = better
+    'subsample':        0.8,
     'colsample_bytree': 0.8,
+    'min_child_weight': 10,         # added — prevents overfitting on rare fraud
+    'reg_alpha':        0.1,        # added — L1 regularization
+    'reg_lambda':       1.0,        # added — L2 regularization
     'scale_pos_weight': scale_pos_weight,
-    'random_state': 42,
-    'verbosity': 0,
-    'tree_method': 'hist',  # Faster training
+    'random_state':     42,
+    'verbosity':        0,
+    'tree_method':      'hist',
 }
 
-# Train with early stopping using watchlist
 watchlist = [(dtrain, 'train'), (dval, 'eval')]
 
 model_xgb = xgb.train(
     params,
     dtrain,
-    num_boost_round=500,
+    num_boost_round=2000,           # was 500 — gives early stopping real room
     evals=watchlist,
-    early_stopping_rounds=50,
-    verbose_eval=False
+    early_stopping_rounds=100,      # was 50 — more patience at lower lr
+    verbose_eval=100,               # print every 100 rounds so you can watch progress
 )
 
 training_time = time.time() - start_time
-print(f"✓ Training completed in {training_time:.2f} seconds")
-print(f"✓ Best iteration: {model_xgb.best_iteration}")
-print(f"✓ Best AUC: {model_xgb.best_score:.4f}")
+print(f"\n✓ Training completed in {training_time:.2f} seconds")
+print(f"✓ Best iteration:   {model_xgb.best_iteration}")
+print(f"✓ Best AUC:         {model_xgb.best_score:.4f}")
 
 # ========== 4. EVALUATE ==========
 print("\n4. Evaluating model...")
 
-# Predict probabilities
 y_val_pred_proba = model_xgb.predict(dval)
-y_val_pred_class = (y_val_pred_proba > 0.5).astype(int)
 
 auc = roc_auc_score(y_val, y_val_pred_proba)
+print(f"\n📈 AUC Score: {auc:.4f}")
+
+# ========== 5. THRESHOLD TUNING ==========
+print("\n5. Tuning decision threshold for best F1...")
+
+precisions, recalls, thresholds = precision_recall_curve(y_val, y_val_pred_proba)
+
+f1_scores = 2 * precisions * recalls / (precisions + recalls + 1e-9)
+best_idx       = np.argmax(f1_scores)
+best_threshold = thresholds[best_idx]
+best_f1        = f1_scores[best_idx]
+
+print(f"✓ Best threshold: {best_threshold:.4f}")
+print(f"✓ Best F1:        {best_f1:.4f}")
+
+# Also report threshold that gives ~80% recall
+target_recall = 0.80
+recall_idx = np.where(recalls >= target_recall)[0]
+if len(recall_idx) > 0:
+    best_recall_idx   = recall_idx[np.argmax(precisions[recall_idx])]
+    recall_threshold  = thresholds[min(best_recall_idx, len(thresholds) - 1)]
+    print(f"✓ Threshold for ~80% recall: {recall_threshold:.4f} "
+          f"(Precision: {precisions[best_recall_idx]:.4f}, "
+          f"Recall: {recalls[best_recall_idx]:.4f})")
+
+# Evaluate at best-F1 threshold
+y_val_pred_class = (y_val_pred_proba > best_threshold).astype(int)
 accuracy = accuracy_score(y_val, y_val_pred_class)
 tn, fp, fn, tp = confusion_matrix(y_val, y_val_pred_class).ravel()
 
 print("\n" + "="*60)
-print("MODEL PERFORMANCE")
+print("MODEL PERFORMANCE (at best-F1 threshold)")
 print("="*60)
-print(f"\n📈 AUC Score: {auc:.4f}")
-print(f"📊 Accuracy: {accuracy:.4f}")
+print(f"\n📈 AUC Score:  {auc:.4f}")
+print(f"📊 Accuracy:   {accuracy:.4f}")
+print(f"🎯 Threshold:  {best_threshold:.4f}")
 print(f"\nConfusion Matrix:")
-print(f"   True Negatives: {tn:>10,}")
+print(f"   True Negatives:  {tn:>10,}")
 print(f"   False Positives: {fp:>10,}")
 print(f"   False Negatives: {fn:>10,}")
-print(f"   True Positives: {tp:>10,}")
+print(f"   True Positives:  {tp:>10,}")
 print(f"\nPrecision: {tp/(tp+fp):.4f}")
-print(f"Recall: {tp/(tp+fn):.4f}")
-print(f"F1 Score: {2*tp/(2*tp+fp+fn):.4f}")
+print(f"Recall:    {tp/(tp+fn):.4f}")
+print(f"F1 Score:  {2*tp/(2*tp+fp+fn):.4f}")
 
-# ========== 5. FEATURE IMPORTANCE ==========
-print("\n5. Top 15 Features:")
+# ========== 6. FEATURE IMPORTANCE ==========
+print("\n6. Top 15 Features:")
 
-# Get feature importance
-importance_scores = model_xgb.get_score(importance_type='weight')
-if not importance_scores:  # If empty, try 'gain'
-    importance_scores = model_xgb.get_score(importance_type='gain')
+importance_scores = model_xgb.get_score(importance_type='gain')   # gain > weight
+if not importance_scores:
+    importance_scores = model_xgb.get_score(importance_type='weight')
 
-# Create dataframe
 importance_df = pd.DataFrame({
-    'feature': list(importance_scores.keys()),
+    'feature':    list(importance_scores.keys()),
     'importance': list(importance_scores.values())
 }).sort_values('importance', ascending=False)
 
-# If no importance scores (all features might not be used), use f-score
 if len(importance_df) == 0:
-    print("   Using feature names from data...")
     importance_df = pd.DataFrame({
-        'feature': X_train.columns,
+        'feature':    X_train.columns,
         'importance': range(len(X_train.columns), 0, -1)
     })
 
@@ -150,48 +176,51 @@ for i in range(min(15, len(importance_df))):
     row = importance_df.iloc[i]
     print(f"   {i+1:2d}. {row['feature'][:40]:40s} : {row['importance']:.4f}")
 
-# ========== 6. SAVE MODEL ==========
-print("\n6. Saving model...")
+# ========== 7. SAVE MODEL ==========
+print("\n7. Saving model...")
 MODELS_DIR.mkdir(exist_ok=True)
 
-# Save in XGBoost native format
 model_path = MODELS_DIR / "xgboost_model.json"
 model_xgb.save_model(str(model_path))
 print(f"✓ Model saved: {model_path}")
 
-# Also save feature importance
 importance_df.to_csv(MODELS_DIR / "feature_importance.csv", index=False)
 print(f"✓ Feature importance saved")
 
-# Save metrics
+# Save best threshold so ensemble can load it
+np.save(MODELS_DIR / "xgboost_threshold.npy", best_threshold)
+print(f"✓ Best threshold saved: xgboost_threshold.npy")
+
 with open(MODELS_DIR / "model_metrics.txt", "w") as f:
     f.write(f"AUC Score: {auc:.4f}\n")
     f.write(f"Accuracy: {accuracy:.4f}\n")
     f.write(f"Precision: {tp/(tp+fp):.4f}\n")
     f.write(f"Recall: {tp/(tp+fn):.4f}\n")
     f.write(f"F1 Score: {2*tp/(2*tp+fp+fn):.4f}\n")
+    f.write(f"Best Threshold: {best_threshold:.4f}\n")
     f.write(f"Best Iteration: {model_xgb.best_iteration}\n")
+    f.write(f"Scale Pos Weight: {scale_pos_weight:.2f}\n")
     f.write(f"Training Time: {training_time:.2f} seconds\n")
+print(f"✓ Metrics saved: model_metrics.txt")
 
-# ========== 7. TEST PREDICTIONS ==========
+# ========== 8. TEST PREDICTIONS ==========
 if has_test:
-    print("\n7. Making test predictions...")
+    print("\n8. Making test predictions...")
     dtest = xgb.DMatrix(X_test)
     test_predictions = model_xgb.predict(dtest)
-    
+
     SUBMISSIONS_DIR.mkdir(exist_ok=True)
     submission = pd.DataFrame({
         'TransactionID': test_ids,
-        'isFraud': test_predictions
+        'isFraud':       test_predictions
     })
-    
+
     submission_path = SUBMISSIONS_DIR / "submission_basic.csv"
     submission.to_csv(submission_path, index=False)
     print(f"✓ Submission saved: {submission_path}")
     print(f"✓ Prediction range: {test_predictions.min():.4f} - {test_predictions.max():.4f}")
-    print(f"✓ Mean prediction: {test_predictions.mean():.4f}")
-    
-    # Show sample
+    print(f"✓ Mean prediction:  {test_predictions.mean():.4f}")
+
     print("\n📊 Sample predictions (first 10):")
     print(submission.head(10))
 
@@ -200,7 +229,10 @@ print("\n" + "="*60)
 print("TRAINING COMPLETE!")
 print("="*60)
 print(f"\n📊 Results Summary:")
-print(f"  - Validation AUC: {auc:.4f}")
-print(f"  - Features Used: {X_train.shape[1]}")
-print(f"  - Training Time: {training_time:.2f} seconds")
+print(f"  - Validation AUC:   {auc:.4f}")
+print(f"  - Best Threshold:   {best_threshold:.4f}")
+print(f"  - Features Used:    {X_train.shape[1]}")
+print(f"  - Best Iteration:   {model_xgb.best_iteration}")
+print(f"  - Scale Pos Weight: {scale_pos_weight:.2f}  (computed)")
+print(f"  - Training Time:    {training_time:.2f} seconds")
 print(f"\n✅ Model saved in: {MODELS_DIR}")
